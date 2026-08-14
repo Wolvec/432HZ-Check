@@ -1,5 +1,6 @@
 import os
 import tempfile
+import requests
 import librosa
 import streamlit as st
 import yt_dlp
@@ -31,66 +32,77 @@ duracion_analisis = st.slider(
     step=5
 )
 
-def analizar_audio(url, duracion):
+def obtener_audio_bytes(url, temp_dir):
     """
-    Descarga el audio de YouTube usando yt-dlp con configuración anti-403,
-    lo convierte a WAV con FFmpeg y analiza los armónicos de frecuencia A4 con Librosa.
+    Descarga el audio evitando el bloqueo 403 de IP en Streamlit Cloud.
+    Usa la API pública de Cobalt como canal primario y yt-dlp como respaldo.
     """
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        temp_filepath = os.path.join(tmp_dir, "audio_temp.%(ext)s")
-        
-        # Configuración optimizada para evitar el error HTTP 403 Forbidden
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': temp_filepath,
-            'quiet': True,
-            'no_warnings': True,
-            'nocheckcertificate': True,
-            'geo_bypass': True,
-            'http_headers': {
-                'User-Agent': (
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                    'AppleWebKit/537.36 (KHTML, like Gecko) '
-                    'Chrome/123.0.0.0 Safari/537.36'
-                ),
-                'Accept': '*/*',
-                'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
-            },
-            'extractor_args': {
-                'youtube': {
-                    # 'mweb' y 'web_embedded' evitan el bloqueo 403 en direcciones IP de la nube
-                    'player_client': ['mweb', 'web_embedded', 'android', 'tv'],
-                }
-            },
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'wav',
-            }],
+    target_wav = os.path.join(temp_dir, "audio_temp.wav")
+    
+    # --- Intento 1: API de Cobalt (Bypass de IP de Datacenter/AWS) ---
+    try:
+        cobalt_endpoint = "https://api.cobalt.tools/api/json"
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "url": url,
+            "downloadMode": "audio",
+            "audioFormat": "wav"
         }
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            
-        archivo_wav = None
-        for file in os.listdir(tmp_dir):
-            if file.endswith('.wav'):
-                archivo_wav = os.path.join(tmp_dir, file)
-                break
-                
-        if not archivo_wav:
-            raise Exception("No se pudo generar el archivo WAV procesado.")
+        response = requests.post(cobalt_endpoint, json=payload, headers=headers, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            download_url = data.get("url")
+            if download_url:
+                audio_res = requests.get(download_url, stream=True, timeout=30)
+                if audio_res.status_code == 200:
+                    with open(target_wav, "wb") as f:
+                        for chunk in audio_res.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    return target_wav, "Audio obtenido con éxito"
+    except Exception:
+        pass  # Si la API no responde, continúa al intento con yt-dlp
 
-        # Cargar el fragmento deseado con Librosa
+    # --- Intento 2: yt-dlp con fallback ---
+    temp_template = os.path.join(temp_dir, "audio_temp.%(ext)s")
+    ydl_opts = {
+        'format': 'bestaudio/b/best',
+        'outtmpl': temp_template,
+        'quiet': True,
+        'no_warnings': True,
+        'nocheckcertificate': True,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'wav',
+        }],
+    }
+    
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        
+    for file in os.listdir(temp_dir):
+        if file.endswith('.wav'):
+            return os.path.join(temp_dir, file), info.get('title', 'Desconocido')
+            
+    raise Exception("No se pudo obtener el archivo de audio procesado.")
+
+def analizar_audio(url, duracion):
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        archivo_wav, titulo = obtener_audio_bytes(url, tmp_dir)
+
+        # Cargar el audio con Librosa para el análisis armónico
         y, sr = librosa.load(archivo_wav, sr=None, mono=True, duration=duracion)
         
-        # Estimar desviación y calcular la frecuencia A4 real
+        # Estimación del desplazamiento respecto a A4 = 440Hz
         tuning_offset = librosa.estimate_tuning(y=y, sr=sr)
         a4_hz = 440.0 * (2.0 ** (tuning_offset / 12.0))
         cents = tuning_offset * 100.0
         
         return {
-            "titulo": info.get('title', 'Desconocido'),
-            "duracion_total": info.get('duration', 0),
+            "titulo": titulo,
             "sample_rate": sr,
             "a4_hz": round(a4_hz, 2),
             "cents": round(cents, 2)
@@ -102,13 +114,14 @@ if st.button("🚀 Analizar Afinación", type="primary"):
         st.warning("⚠️ Por favor, ingresa una URL válida de YouTube.")
     else:
         try:
-            with st.spinner("⏳ Descargando audio y procesando espectro armónico... Esto tomará entre 15 y 30 segundos."):
+            with st.spinner("⏳ Procesando audio y analizando espectro armónico... Esto puede tomar unos segundos."):
                 res = analizar_audio(url_input, duracion_analisis)
             
             st.success("¡Análisis completado con éxito!")
-            st.subheader(f"📌 {res['titulo']}")
+            if res['titulo'] != "Audio obtenido con éxito":
+                st.subheader(f"📌 {res['titulo']}")
             
-            # Despliegue de métricas clave
+            # Métricas
             col1, col2, col3 = st.columns(3)
             col1.metric("Frecuencia A4", f"{res['a4_hz']} Hz")
             col2.metric("Desviación Cents", f"{res['cents']} cents")
