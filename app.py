@@ -33,30 +33,33 @@ duracion_analisis = st.slider(
 
 def analizar_audio(url, duracion):
     """
-    Descarga el audio de YouTube usando yt-dlp, lo convierte a WAV con FFmpeg
-    y analiza los armónicos de frecuencia base A4 usando Librosa.
+    Descarga el audio de YouTube usando yt-dlp con configuración anti-403,
+    lo convierte a WAV con FFmpeg y analiza los armónicos de frecuencia A4 con Librosa.
     """
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_filepath = os.path.join(tmp_dir, "audio_temp.%(ext)s")
         
+        # Configuración optimizada para evitar el error HTTP 403 Forbidden
         ydl_opts = {
-            # 'bestaudio/b/best' evita el error "Requested format is not available"
-            'format': 'bestaudio/b/best',
+            'format': 'bestaudio/best',
             'outtmpl': temp_filepath,
             'quiet': True,
             'no_warnings': True,
             'nocheckcertificate': True,
+            'geo_bypass': True,
             'http_headers': {
                 'User-Agent': (
                     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                     'AppleWebKit/537.36 (KHTML, like Gecko) '
-                    'Chrome/122.0.0.0 Safari/537.36'
+                    'Chrome/123.0.0.0 Safari/537.36'
                 ),
+                'Accept': '*/*',
                 'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
             },
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'ios', 'mweb', 'web']
+                    # 'mweb' y 'web_embedded' evitan el bloqueo 403 en direcciones IP de la nube
+                    'player_client': ['mweb', 'web_embedded', 'android', 'tv'],
                 }
             },
             'postprocessors': [{
