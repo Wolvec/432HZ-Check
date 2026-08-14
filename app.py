@@ -4,32 +4,59 @@ import librosa
 import streamlit as st
 import yt_dlp
 
-st.set_page_config(page_title="Analizador de Afinación A4", page_icon="🎵", layout="centered")
+# Configuración de la página en Streamlit
+st.set_page_config(
+    page_title="Analizador de Afinación A4", 
+    page_icon="🎵", 
+    layout="centered"
+)
 
 st.title("🎵 Analizador de Afinación de YouTube")
-st.markdown("Ingresa un enlace de YouTube para detectar si la música está en **432 Hz**, **440 Hz (Estándar)** u otra frecuencia.")
+st.markdown(
+    "Ingresa un enlace de YouTube para detectar si la música está en "
+    "**432 Hz**, **440 Hz (Estándar)** u otra frecuencia."
+)
 
-url_input = st.text_input("URL del Video de YouTube:", placeholder="https://www.youtube.com/watch?v=...")
-duracion_analisis = st.slider("Segundos de audio a analizar:", min_value=15, max_value=90, value=45, step=5)
+# Componentes de la interfaz
+url_input = st.text_input(
+    "URL del Video de YouTube:", 
+    placeholder="https://www.youtube.com/watch?v=..."
+)
+
+duracion_analisis = st.slider(
+    "Segundos de audio a analizar:", 
+    min_value=15, 
+    max_value=90, 
+    value=45, 
+    step=5
+)
 
 def analizar_audio(url, duracion):
+    """
+    Descarga el audio de YouTube usando yt-dlp, lo convierte a WAV con FFmpeg
+    y analiza los armónicos de frecuencia base A4 usando Librosa.
+    """
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_filepath = os.path.join(tmp_dir, "audio_temp.%(ext)s")
         
         ydl_opts = {
-            'format': 'bestaudio/best',
+            # 'bestaudio/b/best' evita el error "Requested format is not available"
+            'format': 'bestaudio/b/best',
             'outtmpl': temp_filepath,
             'quiet': True,
             'no_warnings': True,
             'nocheckcertificate': True,
             'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+                'User-Agent': (
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/122.0.0.0 Safari/537.36'
+                ),
                 'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
             },
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['ios', 'mweb'],
-                    'player_skip': ['configs', 'webpage']
+                    'player_client': ['android', 'ios', 'mweb', 'web']
                 }
             },
             'postprocessors': [{
@@ -48,9 +75,12 @@ def analizar_audio(url, duracion):
                 break
                 
         if not archivo_wav:
-            raise Exception("No se pudo procesar el archivo WAV.")
+            raise Exception("No se pudo generar el archivo WAV procesado.")
 
+        # Cargar el fragmento deseado con Librosa
         y, sr = librosa.load(archivo_wav, sr=None, mono=True, duration=duracion)
+        
+        # Estimar desviación y calcular la frecuencia A4 real
         tuning_offset = librosa.estimate_tuning(y=y, sr=sr)
         a4_hz = 440.0 * (2.0 ** (tuning_offset / 12.0))
         cents = tuning_offset * 100.0
@@ -63,28 +93,31 @@ def analizar_audio(url, duracion):
             "cents": round(cents, 2)
         }
 
+# Lógica del botón de ejecución
 if st.button("🚀 Analizar Afinación", type="primary"):
     if not url_input.strip():
-        st.warning("⚠️ Por favor, ingresa una URL válida.")
+        st.warning("⚠️ Por favor, ingresa una URL válida de YouTube.")
     else:
         try:
-            with st.spinner("⏳ Descargando audio y procesando armónicos... Esto puede tardar 15-30 segundos."):
+            with st.spinner("⏳ Descargando audio y procesando espectro armónico... Esto tomará entre 15 y 30 segundos."):
                 res = analizar_audio(url_input, duracion_analisis)
             
-            st.success("¡Análisis completado!")
+            st.success("¡Análisis completado con éxito!")
             st.subheader(f"📌 {res['titulo']}")
             
+            # Despliegue de métricas clave
             col1, col2, col3 = st.columns(3)
             col1.metric("Frecuencia A4", f"{res['a4_hz']} Hz")
             col2.metric("Desviación Cents", f"{res['cents']} cents")
             col3.metric("Sample Rate", f"{res['sample_rate']} Hz")
             
+            # Evaluación del diagnóstico
             if abs(res['a4_hz'] - 432.0) <= 2.5:
                 st.info("🌿 **Diagnóstico:** Afinación Verdi / 432 Hz")
             elif abs(res['a4_hz'] - 440.0) <= 2.5:
                 st.info("🎵 **Diagnóstico:** Afinación Estándar ISO / 440 Hz")
             else:
-                st.warning(f"🎼 **Diagnóstico:** Afinación No Estándar ({res['a4_hz']} Hz)")
+                st.warning(f"🎼 **Diagnóstico:** Afinación No Estándar / Alternativa ({res['a4_hz']} Hz)")
                 
         except Exception as e:
             st.error(f"❌ Ocurrió un error al procesar el video: {e}")
