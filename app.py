@@ -18,22 +18,29 @@ def analizar_audio(url, duracion):
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_filepath = os.path.join(tmp_dir, "audio_temp.%(ext)s")
         
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': temp_filepath,
-            'quiet': True,
-            'no_warnings': True,
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            },
-            'extractor_args': {
-                'youtube': {'player_client': ['mweb', 'android', 'ios', 'web']}
-            },
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'wav',
-            }],
+       ydl_opts = {
+                    'format': 'bestaudio/best',
+                    'outtmpl': temp_filepath,
+                    'quiet': True,
+                    'no_warnings': True,
+                    'nocheckcertificate': True,
+                    # Cabecera de dispositivo móvil para evitar detección en datacenters
+                    'http_headers': {
+                                     'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+                                    'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+                },
+    # Forzar el uso exclusivo del cliente iOS/mweb (evita el cliente 'web' en la nube)
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['ios', 'mweb'],
+            'player_skip': ['configs', 'webpage']
         }
+    },
+    'postprocessors': [{
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'wav',
+    }],
+}
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
